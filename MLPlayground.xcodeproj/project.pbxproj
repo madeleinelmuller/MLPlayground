@@ -33,6 +33,7 @@
 		DEAD0001000000000000C024 /* SpatialLMProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEAD0001000000000000F024 /* SpatialLMProcessor.swift */; };
 		DEAD0001000000000000C025 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DEAD0001000000000000F025 /* Assets.xcassets */; };
 		DEAD0001000000000000C033 /* LiveBackgroundState.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEAD0001000000000000F033 /* LiveBackgroundState.swift */; };
+		DEAD0001000000000000C034 /* ZIPExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEAD0001000000000000F034 /* ZIPExtractor.swift */; };
 		DEAD0001000000000000C026 /* ARKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DEAD0001000000000000F026 /* ARKit.framework */; };
 		DEAD0001000000000000C027 /* SceneKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DEAD0001000000000000F027 /* SceneKit.framework */; };
 		DEAD0001000000000000C028 /* CoreML.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DEAD0001000000000000F028 /* CoreML.framework */; };
@@ -76,6 +77,7 @@
 		DEAD0001000000000000F031 /* Accelerate.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Accelerate.framework; path = System/Library/Frameworks/Accelerate.framework; sourceTree = SDKROOT; };
 		DEAD0001000000000000F032 /* PhotosUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PhotosUI.framework; path = System/Library/Frameworks/PhotosUI.framework; sourceTree = SDKROOT; };
 		DEAD0001000000000000F033 /* LiveBackgroundState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveBackgroundState.swift; sourceTree = "<group>"; };
+		DEAD0001000000000000F034 /* ZIPExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZIPExtractor.swift; sourceTree = "<group>"; };
 		DEAD0001000000000000F099 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		DEAD0001000000000000F100 /* MLPlayground.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MLPlayground.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -200,6 +202,7 @@
 			isa = PBXGroup;
 			children = (
 				DEAD0001000000000000F017 /* MLProcessor.swift */,
+				DEAD0001000000000000F034 /* ZIPExtractor.swift */,
 				DEAD0001000000000000F018 /* SHARPProcessor.swift */,
 				DEAD0001000000000000F019 /* DETRProcessor.swift */,
 				DEAD0001000000000000F020 /* DeepLabProcessor.swift */,
@@ -305,6 +308,7 @@
 				DEAD0001000000000000C023 /* FastViTProcessor.swift in Sources */,
 				DEAD0001000000000000C024 /* SpatialLMProcessor.swift in Sources */,
 				DEAD0001000000000000C033 /* LiveBackgroundState.swift in Sources */,
+				DEAD0001000000000000C034 /* ZIPExtractor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
