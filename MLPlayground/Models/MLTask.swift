@@ -177,10 +177,16 @@ struct SegmentationResult {
     let classPixelFractions: [String: Double]
 }
 
-struct DepthResult {
+struct DepthResult: Equatable {
     let depthMap: CGImage
     let minDepth: Float
     let maxDepth: Float
+
+    // CGImage doesn't conform to Equatable; compare by depth range only —
+    // that's sufficient to detect a new frame for the onChange trigger.
+    static func == (lhs: DepthResult, rhs: DepthResult) -> Bool {
+        lhs.minDepth == rhs.minDepth && lhs.maxDepth == rhs.maxDepth
+    }
 }
 
 struct ClassificationResult {
