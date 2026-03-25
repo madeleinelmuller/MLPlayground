@@ -1,6 +1,5 @@
 import Foundation
 import CoreML
-import Combine
 
 // MARK: - Model State
 
@@ -40,35 +39,27 @@ final class MLModelManager {
         return dir
     }()
 
+    // Retain download tasks and their KVO observations for the lifetime of the download.
     private var downloadTasks: [MLTask: URLSessionDownloadTask] = [:]
+    private var downloadObservations: [MLTask: NSKeyValueObservation] = [:]
 
     // MARK: - Public
 
     func prepare(_ task: MLTask) async {
-        guard states[task] == .idle || states[task] == .failed("") else { return }
+        guard case .idle = states[task] else { return }
 
-        // SHARP and SpatialLM use custom pipelines (ARKit / on-device algorithms)
+        // SHARP and SpatialLM use custom pipelines (ARKit / algorithmic); no Core ML file needed.
         if task == .sharp || task == .spatialLM {
             states[task] = .ready
             return
         }
 
         guard let downloadURL = task.modelDownloadURL else {
-            states[task] = .ready   // model bundled or not needed
+            states[task] = .ready
             return
         }
 
-        let modelURL = localURL(for: task)
-        let fileExists: Bool
-        if downloadURL.pathExtension == "zip" {
-            let packageName = downloadURL.deletingPathExtension().lastPathComponent
-            fileExists = FileManager.default.fileExists(
-                atPath: modelsDirectory.appendingPathComponent(packageName).path)
-        } else {
-            fileExists = FileManager.default.fileExists(atPath: modelURL.path)
-        }
-
-        if fileExists {
+        if cachedModelURL(for: task, downloadURL: downloadURL) != nil {
             await load(task)
         } else {
             await download(task, from: downloadURL)
@@ -85,36 +76,43 @@ final class MLModelManager {
         await MainActor.run { states[task] = .downloading(progress: 0) }
 
         do {
-            let localPath = try await downloadFile(task: task, url: url)
-            let finalPath: URL
+            let localZipOrModel = try await downloadFile(task: task, from: url)
 
+            let finalURL: URL
             if url.pathExtension == "zip" {
-                finalPath = try unzip(localPath, task: task)
+                finalURL = try ZIPExtractor.extractModel(from: localZipOrModel, into: modelsDirectory)
+                try? FileManager.default.removeItem(at: localZipOrModel)
             } else {
-                finalPath = localPath
+                finalURL = localZipOrModel
             }
 
-            await load(task, from: finalPath)
+            await load(task, from: finalURL)
         } catch {
             await MainActor.run { states[task] = .failed(error.localizedDescription) }
         }
     }
 
-    private func downloadFile(task: MLTask, url: URL) async throws -> URL {
+    /// Downloads `url` to the models directory, reporting progress via `states[task]`.
+    /// Uses `URLSessionDownloadTask` with a properly-retained KVO observation.
+    private func downloadFile(task: MLTask, from url: URL) async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
-            let session = URLSession.shared
-            let downloadTask = session.downloadTask(with: url) { [weak self] tempURL, _, error in
+            let destURL = modelsDirectory.appendingPathComponent(url.lastPathComponent)
+
+            let dlTask = URLSession.shared.downloadTask(with: url) { [weak self] tempURL, _, error in
+                // Clean up retained objects regardless of outcome
+                self?.downloadTasks.removeValue(forKey: task)
+                self?.downloadObservations.removeValue(forKey: task)
+
                 if let error = error {
                     continuation.resume(throwing: error)
                     return
                 }
-                guard let tempURL = tempURL else {
+                guard let tempURL else {
                     continuation.resume(throwing: URLError(.badServerResponse))
                     return
                 }
-                let destURL = self?.modelsDirectory.appendingPathComponent(url.lastPathComponent) ?? tempURL
-                try? FileManager.default.removeItem(at: destURL)
                 do {
+                    try? FileManager.default.removeItem(at: destURL)
                     try FileManager.default.moveItem(at: tempURL, to: destURL)
                     continuation.resume(returning: destURL)
                 } catch {
@@ -122,53 +120,44 @@ final class MLModelManager {
                 }
             }
 
-            downloadTask.resume()
-            downloadTasks[task] = downloadTask
+            // Retain the task so the download keeps running after the continuation suspends.
+            downloadTasks[task] = dlTask
 
-            // Progress observation
-            let obs = downloadTask.observe(\.countOfBytesReceived) { [weak self] dt, _ in
+            // Retain the observation in the class so it lives for the whole download.
+            downloadObservations[task] = dlTask.observe(\.countOfBytesReceived,
+                                                         options: [.new]) { [weak self] dt, _ in
                 let total = dt.countOfBytesExpectedToReceive
                 let progress = total > 0 ? Double(dt.countOfBytesReceived) / Double(total) : 0
                 Task { @MainActor [weak self] in
                     self?.states[task] = .downloading(progress: progress)
                 }
             }
-            _ = obs  // retain
-        }
-    }
 
-    private func unzip(_ zipURL: URL, task: MLTask) throws -> URL {
-        // Use Process to call unzip (available on macOS/Simulator; on device use ZIPFoundation)
-        let destDir = modelsDirectory
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        process.arguments = ["-o", zipURL.path, "-d", destDir.path]
-        try process.run()
-        process.waitUntilExit()
-        try? FileManager.default.removeItem(at: zipURL)
-
-        // Find the extracted .mlpackage or .mlmodel
-        let contents = try FileManager.default.contentsOfDirectory(at: destDir, includingPropertiesForKeys: nil)
-        if let pkg = contents.first(where: { $0.pathExtension == "mlpackage" }) {
-            return pkg
+            dlTask.resume()
         }
-        if let mlm = contents.first(where: { $0.pathExtension == "mlmodel" }) {
-            return mlm
-        }
-        throw URLError(.cannotOpenFile)
     }
 
     // MARK: - Load
 
     private func load(_ task: MLTask, from url: URL? = nil) async {
         await MainActor.run { states[task] = .loading }
-        let modelPath = url ?? localURL(for: task)
+
+        let modelPath: URL
+        if let url {
+            modelPath = url
+        } else if let cached = cachedModelURL(for: task,
+                                               downloadURL: task.modelDownloadURL) {
+            modelPath = cached
+        } else {
+            await MainActor.run { states[task] = .failed("Model file not found on disk") }
+            return
+        }
 
         do {
             let config = MLModelConfiguration()
             config.computeUnits = .all
             let compiled = try await MLModel.compileModel(at: modelPath)
-            let model = try MLModel(contentsOf: compiled, configuration: config)
+            let model    = try MLModel(contentsOf: compiled, configuration: config)
             await MainActor.run {
                 loadedModels[task] = model
                 states[task] = .ready
@@ -178,7 +167,20 @@ final class MLModelManager {
         }
     }
 
-    private func localURL(for task: MLTask) -> URL {
-        modelsDirectory.appendingPathComponent("\(task.modelFilename).mlmodel")
+    // MARK: - Helpers
+
+    /// Returns the on-disk URL for a previously downloaded model, or nil if not present.
+    private func cachedModelURL(for task: MLTask, downloadURL: URL?) -> URL? {
+        guard let downloadURL else { return nil }
+
+        if downloadURL.pathExtension == "zip" {
+            // After extraction the .mlpackage folder lands directly in modelsDirectory.
+            let contents = (try? FileManager.default.contentsOfDirectory(
+                at: modelsDirectory, includingPropertiesForKeys: nil)) ?? []
+            return contents.first { $0.pathExtension == "mlpackage" || $0.pathExtension == "mlmodel" }
+        } else {
+            let dest = modelsDirectory.appendingPathComponent(downloadURL.lastPathComponent)
+            return FileManager.default.fileExists(atPath: dest.path) ? dest : nil
+        }
     }
 }
