@@ -13,7 +13,6 @@ final class DETRProcessor {
 
     // COCO + Things class labels (133 classes for panoptic)
     static let labels: [String] = {
-        // First 80 are COCO object classes
         let obj = ["person","bicycle","car","motorcycle","airplane","bus","train","truck","boat",
                    "traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat",
                    "dog","horse","sheep","cow","elephant","bear","zebra","giraffe","backpack",
@@ -25,7 +24,6 @@ final class DETRProcessor {
                    "remote","keyboard","cell phone","microwave","oven","toaster","sink",
                    "refrigerator","book","clock","vase","scissors","teddy bear","hair drier",
                    "toothbrush"]
-        // Stuff classes (53)
         let stuff = ["banner","blanket","bridge","cardboard","counter","curtain","door-stuff",
                      "floor-wood","flower","fruit","gravel","house","light","mirror-stuff",
                      "net","pillow","platform","playingfield","railroad","river","road","roof",
@@ -61,8 +59,6 @@ final class DETRProcessor {
                 "image": MLFeatureValue(pixelBuffer: resized)
             ])
             let output = try await model.prediction(from: input)
-
-            // pixel_predictions: (480, 480) multi-array of Int32
             if let multiArray = output.featureValue(for: "pixel_predictions")?.multiArrayValue {
                 return buildResult(from: multiArray, width: 480, height: 480)
             }
@@ -73,16 +69,16 @@ final class DETRProcessor {
 
     private func buildResult(from array: MLMultiArray, width: Int, height: Int) -> SegmentationResult {
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
-        var classSet = Set<Int>()
+        var pixelCounts = [Int: Int]()
 
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
                 let classIdx = array[idx].intValue
-                classSet.insert(classIdx)
+                pixelCounts[classIdx, default: 0] += 1
                 let color = segmentationPalette[classIdx % segmentationPalette.count]
-                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-                color.getRed(&r, green: &g, blue: &b, alpha: &a)
+                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
+                color.getRed(&r, green: &g, blue: &b, alpha: nil)
                 pixels[idx * 4 + 0] = UInt8(r * 255)
                 pixels[idx * 4 + 1] = UInt8(g * 255)
                 pixels[idx * 4 + 2] = UInt8(b * 255)
@@ -90,25 +86,35 @@ final class DETRProcessor {
             }
         }
 
-        let mask = pixelsToImage(pixels: pixels, width: width, height: height)
-        let labels = classSet.compactMap { idx -> (String, Color)? in
-            guard idx < Self.labels.count else { return nil }
-            return (Self.labels[idx], Color(segmentationPalette[idx % segmentationPalette.count]))
-        }
-        let classColors = Dictionary(labels.map { ($0.0, $0.1) }, uniquingKeysWith: { a, _ in a })
+        let total = Double(width * height)
+        var fractions = [String: Double]()
+        var classColors = [String: Color]()
+        var classLabels = [String]()
 
-        return SegmentationResult(mask: mask!, classColors: classColors,
-                                  classLabels: labels.map(\.0))
+        for (classIdx, count) in pixelCounts {
+            guard classIdx < Self.labels.count else { continue }
+            let label = Self.labels[classIdx]
+            fractions[label] = Double(count) / total
+            classColors[label] = Color(segmentationPalette[classIdx % segmentationPalette.count])
+            classLabels.append(label)
+        }
+
+        let mask = pixelsToImage(pixels: pixels, width: width, height: height)!
+        return SegmentationResult(mask: mask, classColors: classColors,
+                                  classLabels: classLabels, classPixelFractions: fractions)
     }
 
     private func mockResult(width: Int, height: Int) -> SegmentationResult {
-        // Generate a colorful mock segmentation
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        var pixelCounts = [Int: Int]()
+
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
                 let zone = (x / (width / 4)) + (y / (height / 4)) * 4
-                let color = segmentationPalette[zone % segmentationPalette.count]
+                let classIdx = zone % segmentationPalette.count
+                pixelCounts[classIdx, default: 0] += 1
+                let color = segmentationPalette[classIdx]
                 var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
                 color.getRed(&r, green: &g, blue: &b, alpha: nil)
                 pixels[idx * 4 + 0] = UInt8(r * 255)
@@ -117,12 +123,20 @@ final class DETRProcessor {
                 pixels[idx * 4 + 3] = 180
             }
         }
+        let total = Double(width * height)
         let mask = pixelsToImage(pixels: pixels, width: width, height: height)!
-        return SegmentationResult(
-            mask: mask,
-            classColors: ["person": .red, "background": .blue, "sky": .cyan],
-            classLabels: ["person", "background", "sky"]
-        )
+        let fractions = pixelCounts.reduce(into: [String: Double]()) { d, pair in
+            let label = pair.key < Self.labels.count ? Self.labels[pair.key] : "class_\(pair.key)"
+            d[label] = Double(pair.value) / total
+        }
+        let colors = fractions.keys.reduce(into: [String: Color]()) { d, label in
+            if let idx = Self.labels.firstIndex(of: label) {
+                d[label] = Color(segmentationPalette[idx % segmentationPalette.count])
+            }
+        }
+        return SegmentationResult(mask: mask, classColors: colors,
+                                  classLabels: Array(fractions.keys),
+                                  classPixelFractions: fractions)
     }
 
     private func pixelsToImage(pixels: [UInt8], width: Int, height: Int) -> CGImage? {

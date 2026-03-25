@@ -1,30 +1,38 @@
 import SwiftUI
 
-// MARK: - Shared Demo Shell (navigation chrome + background)
+// MARK: - Shared Demo Shell
+// Creates a LiveBackgroundState, passes it to AnimatedBackground, and injects
+// it into the environment so every child demo view can feed results to it.
 
 struct DemoShell<Content: View>: View {
     let task: MLTask
     @Environment(\.dismiss) private var dismiss
+
+    /// Single source of truth for the live background.
+    @State private var liveBackground = LiveBackgroundState()
+
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         ZStack(alignment: .top) {
-            // Adaptive background
-            AnimatedBackground(task: task)
+            // Background reads liveBackground directly via @Observable
+            AnimatedBackground(task: task, liveState: liveBackground)
 
             content()
-                .padding(.top, 70)   // leave room for nav bar
+                .padding(.top, 70)
+                // Inject so demo views can write to liveBackground
+                .environment(liveBackground)
 
-            // Navigation bar
             navBar
         }
         .ignoresSafeArea()
         .statusBarHidden(false)
     }
 
+    // MARK: - Navigation bar
+
     private var navBar: some View {
         HStack(spacing: 12) {
-            // Back button
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 dismiss()
@@ -37,7 +45,6 @@ struct DemoShell<Content: View>: View {
                     .overlay(Circle().strokeBorder(.white.opacity(0.3), lineWidth: 0.5))
             }
 
-            // Title
             VStack(alignment: .leading, spacing: 1) {
                 Text(task.title)
                     .font(.headline.weight(.bold))
@@ -49,7 +56,6 @@ struct DemoShell<Content: View>: View {
 
             Spacer()
 
-            // Task icon badge
             Image(systemName: task.systemIcon)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(.white)
@@ -62,11 +68,9 @@ struct DemoShell<Content: View>: View {
         .padding(.top, 56)
         .padding(.bottom, 8)
         .background {
-            LinearGradient(
-                colors: [.black.opacity(0.7), .clear],
-                startPoint: .top, endPoint: .bottom
-            )
-            .ignoresSafeArea(edges: .top)
+            LinearGradient(colors: [.black.opacity(0.7), .clear],
+                           startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea(edges: .top)
         }
     }
 }
@@ -75,61 +79,47 @@ struct DemoShell<Content: View>: View {
 
 struct ModelStatusBanner: View {
     let task: MLTask
-    @State private var visible = true
 
     var body: some View {
         let state = MLModelManager.shared.state(for: task)
-
         Group {
             switch state {
             case .downloading(let p):
                 statusRow(icon: "arrow.down.circle.fill",
-                          text: "Downloading model… \(Int(p * 100))%",
+                          text: "Downloading… \(Int(p * 100))%",
                           color: task.primaryColor)
             case .loading:
-                statusRow(icon: "cpu.fill",
-                          text: "Compiling model…",
-                          color: task.secondaryColor)
+                statusRow(icon: "cpu.fill", text: "Compiling…", color: task.secondaryColor)
             case .failed(let msg):
                 statusRow(icon: "exclamationmark.triangle.fill",
-                          text: msg.isEmpty ? "Model unavailable – using demo mode" : msg,
+                          text: msg.isEmpty ? "Demo mode — model unavailable" : msg,
                           color: .orange)
-            case .ready:
+            case .ready, .idle:
                 EmptyView()
-            case .idle:
-                statusRow(icon: "hourglass",
-                          text: "Preparing…",
-                          color: .gray)
             }
         }
     }
 
     private func statusRow(icon: String, text: String, color: Color) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: icon)
-                .foregroundStyle(color)
-            Text(text)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.white.opacity(0.85))
+            Image(systemName: icon).foregroundStyle(color)
+            Text(text).font(.caption.weight(.medium)).foregroundStyle(.white.opacity(0.85))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 14).padding(.vertical, 8)
         .background(.black.opacity(0.5), in: Capsule())
         .overlay(Capsule().strokeBorder(color.opacity(0.4), lineWidth: 0.5))
     }
 }
 
-// MARK: - Inference FPS counter
+// MARK: - FPS badge
 
 struct FPSBadge: View {
     let fps: Double
-
     var body: some View {
         Text(String(format: "%.0f FPS", fps))
             .font(.system(size: 10, weight: .bold, design: .monospaced))
             .foregroundStyle(.green)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 8).padding(.vertical, 3)
             .background(.black.opacity(0.6), in: Capsule())
             .overlay(Capsule().strokeBorder(.green.opacity(0.4), lineWidth: 0.5))
     }

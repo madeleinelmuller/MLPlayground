@@ -173,6 +173,8 @@ struct SegmentationResult {
     let mask: CGImage
     let classColors: [String: Color]
     let classLabels: [String]
+    /// Fraction of total pixels occupied by each class (0–1). Used to drive the live background.
+    let classPixelFractions: [String: Double]
 }
 
 struct DepthResult {

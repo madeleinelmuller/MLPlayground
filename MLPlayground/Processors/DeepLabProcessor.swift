@@ -4,8 +4,8 @@ import UIKit
 import SwiftUI
 
 // MARK: - DeepLabV3 Semantic Segmentation
-// Input:  [1, 513, 513, 3]  (HWC layout)
-// Output: ResizeBilinear_2:0  — (513, 513) int64 class indices  (21 VOC classes)
+// Input:  [1, 513, 513, 3]
+// Output: (513, 513) int class indices, 21 Pascal VOC classes
 
 final class DeepLabProcessor {
 
@@ -38,10 +38,9 @@ final class DeepLabProcessor {
             ])
             let output = try await model.prediction(from: input)
 
-            // Try common output key names
             for key in ["ResizeBilinear_2:0", "output", "semanticPredictions", "classes"] {
-                if let multiArray = output.featureValue(for: key)?.multiArrayValue {
-                    return buildResult(from: multiArray, width: 513, height: 513)
+                if let ma = output.featureValue(for: key)?.multiArrayValue {
+                    return buildResult(from: ma, width: 513, height: 513)
                 }
             }
         } catch {}
@@ -51,13 +50,13 @@ final class DeepLabProcessor {
 
     private func buildResult(from array: MLMultiArray, width: Int, height: Int) -> SegmentationResult {
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
-        var classSet = Set<Int>()
+        var pixelCounts = [Int: Int]()
 
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
                 let classIdx = array[idx].intValue
-                classSet.insert(classIdx)
+                pixelCounts[classIdx, default: 0] += 1
                 let color = segmentationPalette[classIdx % segmentationPalette.count]
                 var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
                 color.getRed(&r, green: &g, blue: &b, alpha: nil)
@@ -67,26 +66,35 @@ final class DeepLabProcessor {
                 pixels[idx * 4 + 3] = 190
             }
         }
-        let mask = pixelsToImage(pixels: pixels, width: width, height: height)!
-        let labels = classSet.compactMap { idx -> (String, Color)? in
-            guard idx < Self.labels.count else { return nil }
-            return (Self.labels[idx], Color(segmentationPalette[idx % segmentationPalette.count]))
+
+        let total = Double(width * height)
+        var fractions = [String: Double]()
+        var classColors = [String: Color]()
+        var classLabels = [String]()
+
+        for (classIdx, count) in pixelCounts {
+            let label = classIdx < Self.labels.count ? Self.labels[classIdx] : "class_\(classIdx)"
+            fractions[label] = Double(count) / total
+            classColors[label] = Color(segmentationPalette[classIdx % segmentationPalette.count])
+            classLabels.append(label)
         }
-        let classColors = Dictionary(labels.map { ($0.0, $0.1) }, uniquingKeysWith: { a, _ in a })
+
+        let mask = pixelsToImage(pixels: pixels, width: width, height: height)!
         return SegmentationResult(mask: mask, classColors: classColors,
-                                  classLabels: labels.map(\.0))
+                                  classLabels: classLabels, classPixelFractions: fractions)
     }
 
     private func mockResult(width: Int, height: Int) -> SegmentationResult {
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        var pixelCounts = [Int: Int]()
+
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
-                // Fake person silhouette in center
                 let cx = Double(x) / Double(width) - 0.5
                 let cy = Double(y) / Double(height) - 0.5
-                let isCenter = cx * cx + cy * cy < 0.07
-                let classIdx = isCenter ? 15 : 0  // person vs background
+                let classIdx = (cx * cx + cy * cy < 0.07) ? 15 : 0  // person vs background
+                pixelCounts[classIdx, default: 0] += 1
                 let color = segmentationPalette[classIdx % segmentationPalette.count]
                 var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
                 color.getRed(&r, green: &g, blue: &b, alpha: nil)
@@ -96,12 +104,18 @@ final class DeepLabProcessor {
                 pixels[idx * 4 + 3] = 180
             }
         }
+        let total = Double(width * height)
+        let fractions: [String: Double] = [
+            "background": Double(pixelCounts[0, default: 0]) / total,
+            "person":     Double(pixelCounts[15, default: 0]) / total
+        ]
         let mask = pixelsToImage(pixels: pixels, width: width, height: height)!
         return SegmentationResult(
             mask: mask,
             classColors: ["background": Color(segmentationPalette[0]),
                           "person": Color(segmentationPalette[15 % segmentationPalette.count])],
-            classLabels: ["background", "person"]
+            classLabels: ["background", "person"],
+            classPixelFractions: fractions
         )
     }
 

@@ -7,12 +7,13 @@ import SceneKit
 struct SpatialLMDemoView: View {
     let task: MLTask
 
+    @Environment(LiveBackgroundState.self) private var liveBackground
+
     @State private var processor = SpatialLMProcessor()
     @State private var sceneResult: SpatialResult?
     @State private var viewMode: ViewMode = .ar
     @State private var rotationAngle: Double = 0
     @State private var phase: Double = 0
-    @State private var descriptionVisible = true
 
     enum ViewMode: String, CaseIterable {
         case ar = "AR View"
@@ -21,23 +22,16 @@ struct SpatialLMDemoView: View {
     }
 
     var body: some View {
-        DemoShell(task: task) {
-            GeometryReader { geo in
-                ZStack {
-                    // Background content by mode
-                    switch viewMode {
-                    case .ar:     arView(geo: geo)
-                    case .map:    sceneMapView(geo: geo)
-                    case .list:   listView(geo: geo)
-                    }
-
-                    // Bottom panel
-                    VStack {
-                        Spacer()
-                        bottomPanel(geo: geo)
-                    }
-                    .padding(.bottom, 20)
+        GeometryReader { geo in
+            ZStack {
+                switch viewMode {
+                case .ar:   arView(geo: geo)
+                case .map:  sceneMapView(geo: geo)
+                case .list: listView(geo: geo)
                 }
+
+                VStack { Spacer(); bottomPanel(geo: geo) }
+                    .padding(.bottom, 20)
             }
         }
         .task {
@@ -45,11 +39,12 @@ struct SpatialLMDemoView: View {
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
                     sceneResult = result
                 }
+                // Feed 3D object layout → live background
+                liveBackground.update(spatial: result)
             }
             processor.start()
             withAnimation(.linear(duration: 8).repeatForever(autoreverses: false)) {
-                rotationAngle = 360
-                phase = 1
+                rotationAngle = 360; phase = 1
             }
         }
         .onDisappear { processor.stop() }
@@ -60,20 +55,14 @@ struct SpatialLMDemoView: View {
     @ViewBuilder
     private func arView(geo: GeometryProxy) -> some View {
         ZStack {
-            // Space-like background
             Color.black.ignoresSafeArea()
-            StarField(phase: phase)
-                .ignoresSafeArea()
+            StarField(phase: phase).ignoresSafeArea()
 
-            // Floating 3D boxes
             if let result = sceneResult {
                 ForEach(Array(result.objects.enumerated()), id: \.1.id) { idx, obj in
                     FloatingBox3D(object: obj, index: idx, phase: phase, geo: geo)
                 }
-            }
 
-            // Room description card
-            if descriptionVisible, let result = sceneResult {
                 VStack {
                     GlassCard(cornerRadius: 14, padding: 12, tint: task.primaryColor) {
                         Text(result.roomDescription)
@@ -90,75 +79,50 @@ struct SpatialLMDemoView: View {
         }
     }
 
-    // MARK: - Scene Map (top-down 2D view)
+    // MARK: - Scene Map
 
     @ViewBuilder
     private func sceneMapView(geo: GeometryProxy) -> some View {
         ZStack {
             Color.black.ignoresSafeArea()
+            GridFloor(color: task.primaryColor.opacity(0.3)).ignoresSafeArea()
 
-            // Grid floor
-            GridFloor(color: task.primaryColor.opacity(0.3))
-                .ignoresSafeArea()
-
-            // 2D projected objects
             if let result = sceneResult {
-                let scale: CGFloat = geo.size.width / 6.0  // 6m room width → full width
+                let scale: CGFloat = geo.size.width / 6.0
                 let cx = geo.size.width / 2
                 let cy = geo.size.height * 0.45
 
                 ForEach(result.objects) { obj in
                     let bx = cx + CGFloat(obj.center.x) * scale
                     let by = cy + CGFloat(obj.center.z) * scale
-
                     ZStack {
                         RoundedRectangle(cornerRadius: 4)
                             .fill(obj.color.opacity(0.4))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .strokeBorder(obj.color, lineWidth: 1.5)
-                            )
-                            .frame(
-                                width: CGFloat(obj.extent.x) * scale,
-                                height: CGFloat(obj.extent.z) * scale
-                            )
+                            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(obj.color, lineWidth: 1.5))
+                            .frame(width: CGFloat(obj.extent.x) * scale,
+                                   height: CGFloat(obj.extent.z) * scale)
                             .rotationEffect(.degrees(Double(obj.yaw) * 180 / .pi))
-
-                        Text(obj.label)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(2)
+                        Text(obj.label).font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
                     }
                     .position(x: bx, y: by)
                     .animation(.spring(response: 0.5), value: obj.center)
                 }
 
-                // Camera marker
                 ZStack {
                     Circle().fill(.white)
-                    Image(systemName: "camera.fill")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.black)
+                    Image(systemName: "camera.fill").font(.system(size: 8)).foregroundStyle(.black)
                 }
                 .frame(width: 20, height: 20)
                 .position(x: cx, y: cy + 40)
                 .glowEffect(color: .white, radius: 10)
             }
 
-            // Scale indicator
             HStack {
-                Text("2m")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.5))
-                Rectangle()
-                    .fill(.white.opacity(0.4))
-                    .frame(width: geo.size.width / 3, height: 1)
-                Text("2m")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.5))
+                Text("2m").font(.system(size: 9, weight: .medium)).foregroundStyle(.white.opacity(0.5))
+                Rectangle().fill(.white.opacity(0.4)).frame(width: geo.size.width / 3, height: 1)
+                Text("2m").font(.system(size: 9, weight: .medium)).foregroundStyle(.white.opacity(0.5))
             }
-            .frame(maxHeight: .infinity, alignment: .bottom)
-            .padding(.bottom, 150)
+            .frame(maxHeight: .infinity, alignment: .bottom).padding(.bottom, 150)
         }
     }
 
@@ -168,8 +132,6 @@ struct SpatialLMDemoView: View {
     private func listView(geo: GeometryProxy) -> some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            AnimatedBackground(task: task)
-
             ScrollView {
                 VStack(spacing: 8) {
                     if let result = sceneResult {
@@ -177,14 +139,10 @@ struct SpatialLMDemoView: View {
                             objectRow(obj: obj, index: idx)
                         }
                     } else {
-                        ProgressView()
-                            .tint(task.primaryColor)
-                            .padding(.top, 40)
+                        ProgressView().tint(task.primaryColor).padding(.top, 40)
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-                .padding(.bottom, 160)
+                .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 160)
             }
             .padding(.top, 80)
         }
@@ -193,28 +151,20 @@ struct SpatialLMDemoView: View {
     private func objectRow(obj: SpatialResult.BoundingBox3D, index: Int) -> some View {
         GlassCard(cornerRadius: 14, padding: 12, tint: obj.color) {
             HStack(spacing: 12) {
-                // Colour swatch
                 RoundedRectangle(cornerRadius: 6)
                     .fill(obj.color.opacity(0.8))
                     .frame(width: 36, height: 36)
-                    .overlay(
-                        Image(systemName: iconForLabel(obj.label))
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.white)
-                    )
+                    .overlay(Image(systemName: iconForLabel(obj.label))
+                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(.white))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(obj.label.capitalized)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.white)
+                        .font(.subheadline.weight(.bold)).foregroundStyle(.white)
                     Text(String(format: "%.1f × %.1f × %.1f m",
                                 obj.extent.x, obj.extent.y, obj.extent.z))
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.6))
+                        .font(.caption2).foregroundStyle(.white.opacity(0.6))
                 }
-
                 Spacer()
-
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(String(format: "(%.1f, %.1f)", obj.center.x, obj.center.z))
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
@@ -225,17 +175,12 @@ struct SpatialLMDemoView: View {
                 }
             }
         }
-        .opacity(0)
-        .task {
-            try? await Task.sleep(nanoseconds: UInt64(index) * 50_000_000)
-        }
     }
 
     // MARK: - Bottom Panel
 
     private func bottomPanel(geo: GeometryProxy) -> some View {
         VStack(spacing: 10) {
-            // Mode picker
             GlassCard(cornerRadius: 16, padding: 6, tint: task.primaryColor) {
                 HStack(spacing: 0) {
                     ForEach(ViewMode.allCases, id: \.self) { mode in
@@ -248,42 +193,29 @@ struct SpatialLMDemoView: View {
                             Text(mode.rawValue)
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(viewMode == mode ? .black : .white.opacity(0.7))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                                .background {
-                                    if viewMode == mode {
-                                        Capsule().fill(.white)
-                                    }
-                                }
+                                .frame(maxWidth: .infinity).padding(.vertical, 8)
+                                .background { if viewMode == mode { Capsule().fill(.white) } }
                         }
                     }
                 }
             }
-
             GlassCard(cornerRadius: 20, padding: 12, tint: task.primaryColor) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("SpatialLM")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(.white)
+                        Text("SpatialLM").font(.subheadline.weight(.bold)).foregroundStyle(.white)
                         Text(processor.isLiDARAvailable ? "LiDAR active" : "ARKit simulation")
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.6))
+                            .font(.caption2).foregroundStyle(.white.opacity(0.6))
                     }
                     Spacer()
                     if let r = sceneResult {
                         TagBadge(text: "\(r.objects.count) objects", color: task.primaryColor)
                     }
-                    if processor.isLiDARAvailable {
-                        PulsingDot(color: .green)
-                    }
+                    if processor.isLiDARAvailable { PulsingDot(color: .green) }
                 }
             }
         }
         .padding(.horizontal, 16)
     }
-
-    // MARK: - Helpers
 
     private func iconForLabel(_ label: String) -> String {
         let map = ["chair": "chair", "table": "table.furniture", "sofa": "sofa",
@@ -300,7 +232,6 @@ private struct FloatingBox3D: View {
     let index: Int
     let phase: Double
     let geo: GeometryProxy
-
     @State private var offset: CGFloat = 0
 
     private var xPos: CGFloat { geo.size.width  * 0.5 + CGFloat(object.center.x) * 50 }
@@ -308,26 +239,16 @@ private struct FloatingBox3D: View {
 
     var body: some View {
         ZStack {
-            // Box silhouette
             RoundedRectangle(cornerRadius: 8)
                 .fill(object.color.opacity(0.25))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(object.color.opacity(0.8), lineWidth: 1.5)
-                )
-                .frame(
-                    width: CGFloat(object.extent.x) * 55,
-                    height: CGFloat(object.extent.y) * 55
-                )
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(object.color.opacity(0.8), lineWidth: 1.5))
+                .frame(width: CGFloat(object.extent.x) * 55,
+                       height: CGFloat(object.extent.y) * 55)
                 .glowEffect(color: object.color, radius: 8)
-
             VStack(spacing: 3) {
-                Image(systemName: "cube.transparent")
-                    .font(.system(size: 10))
-                    .foregroundStyle(object.color)
-                Text(object.label)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white)
+                Image(systemName: "cube.transparent").font(.system(size: 10)).foregroundStyle(object.color)
+                Text(object.label).font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
             }
         }
         .position(x: xPos, y: yPos + offset)
@@ -335,9 +256,7 @@ private struct FloatingBox3D: View {
             withAnimation(
                 .easeInOut(duration: 2.5 + Double(index) * 0.4)
                 .repeatForever(autoreverses: true)
-            ) {
-                offset = CGFloat.random(in: -8...8)
-            }
+            ) { offset = CGFloat.random(in: -8...8) }
         }
     }
 }
@@ -346,21 +265,16 @@ private struct FloatingBox3D: View {
 
 private struct GridFloor: View {
     let color: Color
-
     var body: some View {
         Canvas { ctx, size in
             let step: CGFloat = 40
             for x in stride(from: 0, to: size.width, by: step) {
-                var path = Path()
-                path.move(to: CGPoint(x: x, y: 0))
-                path.addLine(to: CGPoint(x: x, y: size.height))
-                ctx.stroke(path, with: .color(color), lineWidth: 0.5)
+                var p = Path(); p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: size.height))
+                ctx.stroke(p, with: .color(color), lineWidth: 0.5)
             }
             for y in stride(from: 0, to: size.height, by: step) {
-                var path = Path()
-                path.move(to: CGPoint(x: 0, y: y))
-                path.addLine(to: CGPoint(x: size.width, y: y))
-                ctx.stroke(path, with: .color(color), lineWidth: 0.5)
+                var p = Path(); p.move(to: CGPoint(x: 0, y: y)); p.addLine(to: CGPoint(x: size.width, y: y))
+                ctx.stroke(p, with: .color(color), lineWidth: 0.5)
             }
         }
     }
@@ -370,20 +284,17 @@ private struct GridFloor: View {
 
 private struct StarField: View {
     let phase: Double
-
     var body: some View {
         Canvas { ctx, size in
             var rng = SystemRandomNumberGenerator()
-            for _ in 0..<120 {
+            for i in 0..<120 {
                 let x = CGFloat.random(in: 0..<size.width, using: &rng)
                 let y = CGFloat.random(in: 0..<size.height, using: &rng)
                 let r = CGFloat.random(in: 0.5...2, using: &rng)
-                let alpha = Double.random(in: 0.2...0.8, using: &rng) *
-                    abs(sin(phase * .pi * 2 + Double(x) * 0.01))
-                ctx.fill(
-                    Path(ellipseIn: CGRect(x: x, y: y, width: r, height: r)),
-                    with: .color(.white.opacity(alpha))
-                )
+                let a = Double.random(in: 0.2...0.8, using: &rng) *
+                    abs(sin(phase * .pi * 2 + Double(i) * 0.01))
+                ctx.fill(Path(ellipseIn: CGRect(x: x, y: y, width: r, height: r)),
+                         with: .color(.white.opacity(a)))
             }
         }
     }
