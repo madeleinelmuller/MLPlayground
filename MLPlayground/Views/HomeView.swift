@@ -83,14 +83,10 @@ struct HomeView: View {
     private var taskGrid: some View {
         LazyVGrid(columns: columns, spacing: 14) {
             ForEach(Array(MLTask.allCases.enumerated()), id: \.1.id) { index, task in
-                TaskCard(task: task)
+                TaskCard(task: task, onTap: {
+                    selectedTask = task
+                })
                     .matchedGeometryEffect(id: task.id, in: heroNamespace)
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                            selectedTask = task
-                        }
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    }
                     .opacity(headerAppear ? 1 : 0)
                     .offset(y: headerAppear ? 0 : 30)
                     .animation(

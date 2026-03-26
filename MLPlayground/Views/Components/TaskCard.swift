@@ -5,6 +5,7 @@ import SwiftUI
 struct TaskCard: View {
     let task: MLTask
     var isSelected: Bool = false
+    var onTap: () -> Void = {}
     @State private var hovered = false
     @State private var iconBounce: CGFloat = 0
 
@@ -91,7 +92,12 @@ struct TaskCard: View {
         .scaleEffect(hovered ? 0.97 : 1)
         .shadow(color: task.primaryColor.opacity(0.4), radius: hovered ? 8 : 20, y: hovered ? 4 : 10)
         .animation(.spring(response: 0.35, dampingFraction: 0.7), value: hovered)
-        ._onButtonGesture(pressing: { hovered = $0 }, perform: {})
+        ._onButtonGesture(pressing: { hovered = $0 }, perform: {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                onTap()
+            }
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        })
     }
 }
 
